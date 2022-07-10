@@ -1,38 +1,40 @@
 from conans import ConanFile, tools
 from conans.model import Generator
 from pathlib import Path
-
-import os
-import re
-import sys
-import json
-import itertools
-import operator
-import textwrap
 from contextlib import contextmanager
 
-# and https://cmake.org/cmake/help/latest/manual/cmake-language.7.html#escape-sequences
-_escape_encoded = {"\t": r"\t", "\r": r"\r", "\n": r"\n"}
-_escape_identity = re.compile("[^A-Za-z0-9_;]")
+import os
+import sys
+import json
+import textwrap
+import itertools
+import operator
 
 
-class CMakePythonEnvironment(Generator):
+class PythonVirtualEnvironmentPackage(ConanFile):
+    name = "pyvenv"
+    version = "0.1.0"
+    url = "https://github.com/samuel-emrys/pyvenv.git"
+    homepage = "https://github.com/samuel-emrys/pyvenv.git"
+    license = "MIT"
+    description = "A python_requires library providing a management class for python virtual environments and a CMake generator to expose executables in those virtual environments as CMake targets"
+    topics = ("Python", "Virtual Environment", "CMake", "venv")
+    no_copy_source = True
+
+class CMakePythonEnvironment(object):
+    def __init__(self, conanfile):
+        self._conanfile = conanfile
 
     @property
     def binpath(self):
         return "Scripts" if sys.platform == "win32" else "bin"
 
     @property
-    def filename(self):
-        pass
-
-    @property
     def content(self):
-
         config = {}
-        for dep_name, user_info in self.conanfile.deps_user_info.items():
+        for dep_name, user_info in self._conanfile.deps_user_info.items():
             requirements = {}
-            virtualenv = venv(self.conanfile)
+            virtualenv = venv(self._conanfile)
             package_targets = {}
             if "python_requirements" in user_info.vars:
                 requirements = json.loads(user_info.python_requirements)
@@ -42,7 +44,7 @@ class CMakePythonEnvironment(Generator):
                 realname = path.resolve(strict=True).name
                 interpreter = str(path.with_name(realname))
                 virtualenv = venv(
-                    self.conanfile,
+                    self._conanfile,
                     python=interpreter,
                     env_folder=user_info.python_envdir,
                 )
@@ -53,7 +55,7 @@ class CMakePythonEnvironment(Generator):
                 package_targets[package] = entry_points.get("console_scripts", [])
 
             extension = ""
-            if self.settings.os == "Windows":
+            if self._conanfile.settings.os == "Windows":
                 extension = ".exe"
             for package, targets in package_targets.items():
                 for target in targets:
@@ -68,7 +70,7 @@ class CMakePythonEnvironment(Generator):
                     if not exe_path:
                         self.output.warn(f"Could not find path to {target}{extension}")
                     else:
-                        filename = os.path.join(self.conanfile.generators_folder, f"{package}-config.cmake")
+                        filename = f"{package}-config.cmake"
                         config[filename] = config.get(filename, "") + textwrap.dedent(
                             f"""\
                             if(NOT TARGET {package}::{target})
@@ -80,6 +82,11 @@ class CMakePythonEnvironment(Generator):
 
         return config
 
+    def generate(self):
+        for filename, content in self.content.items():
+            tools.save(
+                os.path.join(self._conanfile.generators_folder, filename), content
+            )
 
 # mostly like shutil.which, but allows searching for alternate filenames,
 # and never falls back to %PATH% or curdir
@@ -127,7 +134,6 @@ def _which(files, paths, access=os.F_OK | os.X_OK):
                 return realname(filepath)
     return None
 
-
 def _default_python():
     base_exec_prefix = sys.base_exec_prefix
 
@@ -160,7 +166,9 @@ def _default_python():
         return sys.executable
 
 
-# build helper for making venv
+
+
+# build helper for making and managing python virtual environments
 class venv:
     def __init__(self, conanfile, python=_default_python(), env_folder=None):
         self._conanfile = conanfile
@@ -343,3 +351,4 @@ class venv:
         with tools.environment_append(self.env):
             yield
         sys.path = old_path
+
