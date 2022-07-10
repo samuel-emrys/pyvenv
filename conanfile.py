@@ -266,8 +266,8 @@ class venv:
                 # SameFileError if the launcher script is *already* in the target_folder
                 # e.g. on posix systems the venv scripts are already in bin/
                 if not silent:
-                    self._conanfile.output.error(
-                        f"pyvenv.setup_entry_points: SameFileError: command '{name}' already found in '{folder}'. Other entry_points may also be unintentionally visible."
+                    self._conanfile.output.info(
+                        f"pyvenv.setup_entry_points: command '{name}' already found in '{folder}'. Other entry_points may also be unintentionally visible."
                     )
 
         entry_points = self.entry_points(package)
