@@ -1,5 +1,4 @@
 from conans import ConanFile, tools
-from conans.model import Generator
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -21,7 +20,7 @@ class PythonVirtualEnvironmentPackage(ConanFile):
     topics = ("Python", "Virtual Environment", "CMake", "venv")
     no_copy_source = True
 
-class CMakePythonEnvironment(object):
+class CMakePythonDeps(object):
     def __init__(self, conanfile):
         self._conanfile = conanfile
 

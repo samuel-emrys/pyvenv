@@ -3,7 +3,7 @@
 This is a conan `python_requires` package, exposing two main pieces of functionality:
 
 1. A `venv` class, which can be used to create and manage python virtual environments.
-2. A `CMakePythonEnvironment` generator, which can be used to generate CMake targets for executables in a python virtual environment.
+2. A `CMakePythonDeps` generator, which can be used to generate CMake targets for executables in a python virtual environment.
 
 Appropriate usage of each of these will be detailed below.
 
@@ -66,9 +66,9 @@ class PythonVirtualEnvironment(ConanFile):
 
 An example of a package that uses this is the [`python-virtualenv/system`](https://github.com/samuel-emrys/python-virtualenv) package.
 
-## `CMakePythonEnvironment` Generator
+## `CMakePythonDeps` Generator
 
-For a recipe to be consumed using the `CMakePythonEnvironment` generator, populate the `self.user_info.python_requirements` and `self.user_info.python_env` `package_info()` variables as below:
+For a recipe to be consumed using the `CMakePythonDeps` generator, populate the `self.user_info.python_requirements` and `self.user_info.python_env` `package_info()` variables as below:
 
 ```python
 class PythonVirtualEnvironment(ConanFile):
@@ -89,7 +89,7 @@ class PythonVirtualEnvironment(ConanFile):
 
 An example of a package that uses this is the [`python-virtualenv/system`](https://github.com/samuel-emrys/python-virtualenv) package.
 
-To consume a recipe that has populated the above variables, simply specify `CMakePythonEnvironment` as the generator to use in the consumer `conanfile.py`:
+To consume a recipe that has populated the above variables, simply specify `CMakePythonDeps` as the generator to use in the consumer `conanfile.py`:
 
 ```python
 class ExamplePythonConan(ConanFile):
@@ -97,7 +97,7 @@ class ExamplePythonConan(ConanFile):
     python_requires = "pyvenv/0.1.0"
 
     def generate(self):
-        py = python_requires["pyvenv"].modules.CMakePythonEnvironment(self)
+        py = python_requires["pyvenv"].modules.CMakePythonDeps(self)
         py.generate()
 ```
 
