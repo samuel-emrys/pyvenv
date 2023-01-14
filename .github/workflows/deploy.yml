@@ -1,0 +1,29 @@
+name: Deploy Package
+
+on: [push]
+
+jobs:
+  deploy:
+    name: "Build and Deploy to Mount Olympus"
+    runs-on: ubuntu-latest
+    container:
+      image: "conanio/gcc12-ubuntu16.04:latest"
+      options: --user root
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: configure conan
+        shell: bash
+        run: |
+          conan remote add mtolympus https://mtolympus.jfrog.io/artifactory/api/conan/mtolympus-conan
+          conan user -p ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_TOKEN }} -r mtolympus ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_USER }}
+      - name: create package
+        shell: bash
+        run: |
+          conan create . mtolympus/stable
+      - name: deploy package
+        if: github.ref == 'refs/heads/master' && success()
+        shell: bash
+        run: |
+          conan upload pyvenv/*@mtolympus/stable -r mtolympus -c
+
