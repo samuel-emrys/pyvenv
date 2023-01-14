@@ -1,4 +1,5 @@
-from conans import ConanFile, tools
+from conan import ConanFile
+from conan.tools.env import Environment
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -19,6 +20,14 @@ class PythonVirtualEnvironmentPackage(ConanFile):
     description = "A python_requires library providing a management class for python virtual environments and a CMake generator to expose executables in those virtual environments as CMake targets"
     topics = ("Python", "Virtual Environment", "CMake", "venv")
     no_copy_source = True
+
+def _args_to_string(args):
+    if not args:
+        return ""
+    if sys.platform == 'win32':
+        return subprocess.list2cmdline(args)
+    else:
+        return " ".join("'" + arg.replace("'", r"'\''") + "'" for arg in args)
 
 # mostly like shutil.which, but allows searching for alternate filenames,
 # and never falls back to %PATH% or curdir
@@ -125,12 +134,17 @@ class PythonVirtualEnv:
                 venv_options.append("--clear")
             if not with_pip:
                 venv_options.append("--without-pip")
-            with tools.environment_append({"__PYVENV_LAUNCHER__": None}):
-                self._conanfile.run(
-                    tools.args_to_string(
-                        [self.base_python, "-mvenv", *venv_options, self.env_folder]
-                    )
-                )
+
+            env = Environment()
+            env.define("__PYVENV_LAUNCHER__", None)
+            envvars = env.vars(self._conanfile, scope="build")
+            envvars.save_script("build_python")
+            self._conanfile.run(
+                _args_to_string(
+                    [self.base_python, "-mvenv", *venv_options, self.env_folder]
+                ),
+                env="conanbuild"
+            )
         else:
             # fallback to using the python this script is running in
             # (risks the new venv having an inadvertant dependency if conan itself is virtualized somehow, but it will *work*)
@@ -283,4 +297,5 @@ class PythonVirtualEnv:
         with tools.environment_append(self.env):
             yield
         sys.path = old_path
+
 
