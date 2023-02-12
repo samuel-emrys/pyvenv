@@ -9,17 +9,19 @@ import json
 import textwrap
 import itertools
 import operator
+import subprocess
 
 
 class PythonVirtualEnvironmentPackage(ConanFile):
     name = "pyvenv"
-    version = "0.1.0"
+    version = "0.1.1"
     url = "https://github.com/samuel-emrys/pyvenv.git"
     homepage = "https://github.com/samuel-emrys/pyvenv.git"
     license = "MIT"
     description = "A python_requires library providing a management class for python virtual environments and a CMake generator to expose executables in those virtual environments as CMake targets"
     topics = ("Python", "Virtual Environment", "CMake", "venv")
     no_copy_source = True
+    package_type = "python-require"
 
 def _args_to_string(args):
     if not args:
