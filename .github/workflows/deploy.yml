@@ -3,7 +3,7 @@ name: Deploy Package
 on: [push]
 
 jobs:
-  deploy:
+  linux:
     name: "Build and Deploy to Mount Olympus"
     runs-on: ubuntu-latest
     container:
@@ -11,7 +11,7 @@ jobs:
       options: --user root
     steps:
       - name: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: configure conan
         shell: bash
         run: |
@@ -26,4 +26,22 @@ jobs:
         shell: bash
         run: |
           conan upload pyvenv/*@mtolympus/stable -r mtolympus -c
-
+  windows:
+    name: "Build Windows"
+    runs-on: windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+      - name: install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: install conan
+        run: |
+          pip install conan
+      - name: configure conan
+        run: |
+          conan remote add mtolympus https://mtolympus.jfrog.io/artifactory/api/conan/mtolympus-conan
+      - name: create package
+        run: |
+          conan create . mtolympus/stable
