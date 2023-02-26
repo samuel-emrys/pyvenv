@@ -1,13 +1,13 @@
-name: Deploy Conan 1.x Package
+name: Deploy Conan 2.x Package
 
 on: [push]
 
 jobs:
-  linux:
+  deploy:
     name: "Build and Deploy to Mount Olympus"
     runs-on: ubuntu-latest
     container:
-      image: "samuelemrys/gcc12-ubuntu18.04:1.59.0"
+      image: "samuelemrys/gcc12-ubuntu18.04:latest"
       options: --user root
     steps:
       - name: checkout
@@ -16,11 +16,12 @@ jobs:
         shell: bash
         run: |
           conan remote add mtolympus https://mtolympus.jfrog.io/artifactory/api/conan/mtolympus-conan
-          conan user -p ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_TOKEN }} -r mtolympus ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_USER }}
+          conan remote login mtolympus ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_USER }} -p ${{ secrets.MOUNT_OLYMPUS_DEPLOYMENT_TOKEN }}
+          conan profile detect
       - name: create package
         shell: bash
         run: |
-          conan create . mtolympus/stable -tf test_v1_package
+          conan create . --user mtolympus --channel stable -pr:h default -pr:b default
       - name: deploy package
         if: github.ref == 'refs/heads/master' && success()
         shell: bash
@@ -38,10 +39,12 @@ jobs:
           python-version: '3.11'
       - name: install conan
         run: |
-          pip install conan==1.59.0
+          pip install conan
       - name: configure conan
         run: |
           conan remote add mtolympus https://mtolympus.jfrog.io/artifactory/api/conan/mtolympus-conan
+          conan profile detect
       - name: create package
         run: |
-          conan create . mtolympus/stable -tf test_v1_package
+          conan create . --user mtolympus --channel stable -pr:h default -pr:b default
+
