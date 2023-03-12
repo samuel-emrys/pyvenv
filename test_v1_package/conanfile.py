@@ -39,10 +39,18 @@ class PyvenvTestConan(ConanFile):
         return self._venv
 
     def build(self):
+        args_to_string = self.python_requires["pyvenv"].module.args_to_string
         venv = self._configure_venv()
-        venv.create(folder=os.path.join(self.build_folder))
-        args_to_string = self.python_requires["pyvenv"].module._args_to_string
-        self.run(args_to_string([venv.pip, "install", "sphinx==4.4.0"]))
+        # Any of the three following techniques to install are supported
+        venv.create(folder=os.path.join(self.build_folder), requirements=["sphinx==4.4.0"])
+        self.run(args_to_string([venv.python, "-mpip", "install", "sphinx-rtd-theme"]), env="conanbuild")
+        with venv.activate():
+            # Invoking venv.pip _must_ be in an activated virtualenv
+            # If you don't do this, the system interpreter will be used and the package won't be patchable
+            self.run(args_to_string([venv.pip, "install", "sphinx-multiversion"]), env="conanbuild")
+        # make_relocatable is only necessary for packages installed outside of `venv.create`
+        venv.make_relocatable(env_folder=self.build_folder)
+
 
     def layout(self):
         basic_layout(self)
@@ -50,6 +58,6 @@ class PyvenvTestConan(ConanFile):
     def test(self):
         bindir = "Scripts" if self.settings.os == "Windows" else "bin"
         if not cross_building(self):
-            args_to_string = self.python_requires["pyvenv"].module._args_to_string
+            args_to_string = self.python_requires["pyvenv"].module.args_to_string
             cmd = [os.path.join(self.build_folder, bindir, "sphinx-build"), "--help"]
             self.run(args_to_string(cmd), env="conanrun")
