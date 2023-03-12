@@ -495,7 +495,7 @@ class PythonVirtualEnv:
         :param home_dir: The base path to the virtual environment
         :type home_dir: str
         """
-        home_dir = os.path.abspath(home_dir)
+        home_dir = pathlib.Path(home_dir).absolute()
         lib_dir, inc_dir, bin_dir = None, None, None
         # XXX: We'd use distutils.sysconfig.get_python_inc/lib but its
         # prefix arg is broken: http://bugs.python.org/issue3386
@@ -503,12 +503,12 @@ class PythonVirtualEnv:
             # Windows has lots of problems with executables with spaces in
             # the name; this function will remove them (using the ~1
             # format):
-            mkdir(home_dir)
-            if " " in home_dir:
+            home_dir.mkdir(parents=True, exist_ok=True)
+            if " " in str(home_dir):
                 import ctypes
 
                 get_short_path_name = ctypes.windll.kernel32.GetShortPathNameW
-                size = max(len(home_dir) + 1, 256)
+                size = max(len(str(home_dir)) + 1, 256)
                 buf = ctypes.create_unicode_buffer(size)
                 try:
                     # noinspection PyUnresolvedReferences
@@ -847,18 +847,32 @@ class PythonVirtualEnv:
             if "~dp0" in f.read():
                 self._debug(f"{activate} has already been made relocatable. Continuing.")
                 return
+        substitution = textwrap.dedent('''\
+                        pushd %~dp0..
+                        set "VIRTUAL_ENV=%CD%"
+                        popd
+                        ''')
+        # These search patterns account for the variations in the contents of activate.bat
+        # based on whether it was created using `virtualenv venv` or `python -m venv venv`
+        search_patterns = [
+            f'set "VIRTUAL_ENV={os.path.abspath(self.env_folder)}"',
+            f'set VIRTUAL_ENV={os.path.abspath(self.env_folder)}'
+        ]
+        missed_patterns = 0
 
-        replace_in_file(
-            self._conanfile,
-            file_path=activate, 
-            search=f'set "VIRTUAL_ENV={os.path.abspath(self.env_folder)}"',
-            replace=textwrap.dedent('''\
-                pushd %~dp0..
-                set "VIRTUAL_ENV=%CD%"
-                popd
-                '''
-            ),
-        )
+        for pattern in search_patterns:
+            try:
+                replace_in_file(
+                    self._conanfile,
+                    file_path=activate,
+                    search=pattern,
+                    replace=substitution,
+                )
+                break
+            except Exception:
+                missed_patterns += 1
+                if missed_patterns == len(search_patterns):
+                    self._conanfile.output.error(f"Couldn't find any of the following patterns in {activate}: {','.join('`' + pattern + '`' for pattern in search_patterns)}")
 
     def _patch_activate_fish(self, activate):
         """
