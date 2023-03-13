@@ -9,6 +9,8 @@ This package exposes a number of modules:
 * `setup_entry_points`: Create an entry point for a package installed in the virtual environment
 * `entry_points`: Retrieve the entry points associated with a particular package in the virtual environment
 * `which`: Retrieve the path to an executable within the virtual environment
+* `args_to_string`: Convert a list of arguments to a command line string in an operating system agnostic way
+* `make_relocatable`: Patch files in the virtualenv such that it can be relocated on the local file system.
 
 ## Usage
 
@@ -16,17 +18,23 @@ Create a new python virtual environment:
 
 ```python
 class PythonVirtualEnvironment(ConanFile):
-    python_requires = "pyvenv/0.1.0"
+    python_requires = "pyvenv/[>=0.2.0]@mtolympus/stable"
 
     def package(self):
+        requirements = ["sphinx==4.4.0", "sphinx_rtd_theme=0.5.3", "matplotlib==3.5.0"]
+        args_to_string = self.python_requires["pyvenv"].module.args_to_string
         venv = self.python_requires["pyvenv"].module.PythonVirtualEnv(self)
-        venv.create(folder=os.path.join(self.package_folder))
-        self.run(
-            tools.args_to_string([
-                venv.pip, "install", "sphinx==4.4.0", "sphinx_rtd_theme=0.5.3", "matplotlib==3.5.0",
-            ])
-        )
+
+        # You can use any of the following methods to install packages into the virtualenv
+        venv.create(folder=os.path.join(self.package_folder), requirements=requirements)
+        self.run(args_to_string([venv.python, "-mpip", "install", "sphinx-multiversion"], scope="conanbuild")
+        with venv.activate():
+            # NOTE: Do not use `venv.pip` outside of an `activate` block - it will embed the incorrect interpreter
+            # into the script
+            self.run(args_to_string([venv.pip, "install", "black"], scope="conanbuild")
+
         venv.setup_entry_points("sphinx", os.path.join(self.package_folder, "bin"))
+        venv.make_relocatable(env_folder=self.package_folder) # Only needs to be run when packages are installed outside of `venv.create()`
 ```
 
 Manage an existing python virtual environment:
@@ -35,7 +43,7 @@ Manage an existing python virtual environment:
 from pathlib import Path
 
 class PythonVirtualEnvironment(ConanFile):
-    python_requires = "pyvenv/0.1.0"
+    python_requires = "pyvenv/[>=0.2.0]@mtolympus/stable"
 
     @property
     def binpath(self):
@@ -48,7 +56,7 @@ class PythonVirtualEnvironment(ConanFile):
         interpreter = str(path.with_name(realname))
         venv = self.python_requires["pyvenv"].module.PythonVirtualEnv(
             self._conanfile,
-            python=interpreter,
+            interpreter=interpreter,
             env_folder=python_envdir,
         )
 
@@ -60,7 +68,5 @@ class PythonVirtualEnvironment(ConanFile):
 An example of a package that uses this is the [`python-virtualenv/system`](https://github.com/samuel-emrys/python-virtualenv) package.
 
 See also the [CMakePythonDeps](https://github.com/samuel-emrys/cmake-python-deps) generator, which is designed to be used in conjunction with PythonVirtualEnv.
-
-An example of this being used in conjunction with `python-virtualenv` is [`sphinx-consumer`](https://github.com/samuel-emrys/sphinx-consumer).
 
 This has been developed with significant inspiration from, and uses `pyvenv` code largely developed by [thorntonryan/conan-pyvenv](https://github.com/thorntonryan/conan-pyvenv), and modified by Samuel Dowling.
