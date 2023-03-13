@@ -470,6 +470,21 @@ class PythonVirtualEnv:
         """
         Makes the already-existing environment use relative paths, and takes out
         the #!-based environment selection in scripts.
+
+        This functionality does not make a virtual environment relocatable to any
+        environment other than the one in which it was created in. This is only suitable
+        for moving a venv directory to another directory in the same environment, such
+        as would be achieved with `mv venv venv2`.
+
+        This functionality is _NOT_ suitable for transplanting a venv for usage in a
+        deployment environment, where it is on a different physical machine, with a
+        different python interpreter, or different underlying library requirements, such
+        as GLIBC. It is only suitable for usage within the same environment in which it
+        was built.
+
+        In a conan context, the resulting virtualenv should not be uploaded to a server.
+        The `build_policy="missing"` and `upload_policy="skip"` attributes should be set.
+
         Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L1890-L1903
         MIT License
 
