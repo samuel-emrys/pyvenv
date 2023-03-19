@@ -13,6 +13,8 @@ import textwrap
 import itertools
 import operator
 import subprocess
+import binascii
+import codecs
 
 
 class PythonVirtualEnvironmentPackage(ConanFile):
@@ -191,6 +193,7 @@ class PythonVirtualEnv:
         self.base_python = interpreter
         self.env_folder = env_folder
         self._debug = self._conanfile.output.debug if (Version(conan_version).major >= 2) else self._conanfile.output.info
+        self._conanfile.output.info(f"Version = {Version(conan_version).major}")
 
     def create(self, folder, *, clear=True, symlinks=(os.name != "nt"), with_pip=True, requirements=[]):
         """
@@ -298,6 +301,7 @@ class PythonVirtualEnv:
             # locate script in venv
             try:
                 path = self.which(name, required=True)
+                self._conanfile.output.info(f"Found {name} at {path}")
             except FileNotFoundError as e:
                 # avoid FileNotFound if the no launcher script for this name was found, or
                 self._conanfile.output.warning(
@@ -306,9 +310,12 @@ class PythonVirtualEnv:
                 return
 
             root, ext = os.path.splitext(path)
+            self._conanfile.output.info(f"{name} split into {root}, {ext}")
+
 
             try:
                 # copy venv script to target folder
+                self._conanfile.output.info(f"Attempting to copy {path} to {target_folder}")
                 shutil.copy2(path, target_folder)
 
                 # copy entry point script
@@ -319,8 +326,10 @@ class PythonVirtualEnv:
                     ext = "-script.py"
 
                 entry_point_script = root + ext
+                self._conanfile.output.info(f"Entry point script evaluated to {entry_point_script}")
 
                 if os.path.isfile(entry_point_script):
+                    self._conanfile.output.info(f"Attempting to copy {entry_point_script} to {target_folder}")
                     shutil.copy2(entry_point_script, target_folder)
             except shutil.SameFileError:
                 # SameFileError if the launcher script is *already* in the target_folder
@@ -498,6 +507,7 @@ class PythonVirtualEnv:
                 f"The environment doesn't have a file {activate_this} -- please re-run virtualenv " "on this environment to update it"
             )
         self._fixup_scripts(bin_dir)
+        self._fixup_executables(bin_dir)
         self._fixup_pth_and_egg_link(home_dir)
         self._patch_activate_scripts(bin_dir)
 
@@ -605,6 +615,68 @@ class PythonVirtualEnv:
             with open(filename, "wb") as f:
                 f.write("\n".join(script).encode("utf-8"))
 
+    def _fixup_executables(self, bin_dir):
+
+        if not self._is_win:
+            # Unix binaries don't need to be fixed
+            return
+        decode_hex = codecs.getdecoder("hex_codec")
+        encode_hex = codecs.getencoder("hex_codec")
+        interpreter = "python.exe"
+        dont_patch_files = [
+            interpreter,
+            "pythonw.exe",
+        ]
+
+        # The shebang line replacement
+        shebang_search = f"#!{os.path.normcase(os.path.join(bin_dir, interpreter))}".encode("utf-8")
+        self._debug(f"{shebang_search=}")
+        cmd = os.path.normcase(os.path.join('C:\\', 'Windows', 'system32', 'cmd.exe'))
+        shebang_replace = f"#!{cmd} /c {interpreter}".encode("utf-8")
+        self._debug(f"{shebang_replace=}")
+
+        # Pull in the activation script to run when executing the executable
+        #utf_header = "-*- coding: utf-8 -*-".encode("utf-8")
+        search_string = "import sys".encode("utf-8")
+        activate = (
+            "import os; "
+            "activate_this=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'activate_this.py'); "
+            "print(activate_this); "
+            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
+            "del os, activate_this"
+        )
+        activation_insertion = f"".encode("utf-8")
+        #activation_insertion = f"{activate}\n{search_string.decode('utf-8')}".encode("utf-8")
+        #activation_insertion = f"{activate}\n{utf_header.decode('utf-8')}".encode("utf-8")
+        #activation_insertion = f"{utf_header.decode('utf-8')}".encode("utf-8")
+        self._debug(f"{activation_insertion=}")
+
+        for filename in os.listdir(bin_dir):
+            filename = os.path.join(bin_dir, filename)
+            if not os.path.isfile(filename):
+                continue
+            if ".exe" in filename and filename not in dont_patch_files:
+                self._conanfile.output.info(f"Making {filename} relative")
+                contents_hex = []
+                with open(filename, "rb") as f:
+                    for chunk in iter(lambda: f.read(32), b''):
+                        contents_hex.append(binascii.hexlify(chunk))
+                # Combine all binary contents into one big byte string instead of a [(content, size), (content,size)]
+                contents = b"".join([decode_hex(element)[0] for element in contents_hex])
+
+                if b"system32" in contents:
+                    self._debug(f"{filename} has already been patched.")
+                    continue
+                # Find and replace in big byte string
+                # patched = contents.replace(shebang_search, shebang_replace)
+                patched = contents.replace(search_string, activation_insertion)
+                # Reconstruct the binary form of the file before re-writing it out
+                patched_chunked = [patched[i:i+32] for i in range(0, len(patched), 32)]
+                patched_hex = [encode_hex(element)[0] for element in patched_chunked]
+
+                with open(filename, "wb") as f:
+                    for chunk in patched_hex:
+                        f.write(binascii.unhexlify(chunk))
 
 
     def _relative_script(self, lines):
@@ -869,10 +941,8 @@ class PythonVirtualEnv:
                         ''')
         # These search patterns account for the variations in the contents of activate.bat
         # based on whether it was created using `virtualenv venv` or `python -m venv venv`
-        search_patterns = [
-            f'set "VIRTUAL_ENV={os.path.abspath(self.env_folder)}"',
-            f'set VIRTUAL_ENV={os.path.abspath(self.env_folder)}'
-        ]
+        search_patterns = [f'set "VIRTUAL_ENV={os.path.abspath(self.env_folder)}"',
+                           f'set VIRTUAL_ENV={os.path.abspath(self.env_folder)}']
         missed_patterns = 0
 
         for pattern in search_patterns:
