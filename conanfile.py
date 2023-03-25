@@ -4,6 +4,10 @@ from conan.tools.files import replace_in_file
 from conan.tools.scm import Version
 from pathlib import Path
 from contextlib import contextmanager
+from zipfile import ZipInfo, ZipFile
+from pip._vendor.distlib.resources import finder
+from pip._vendor.distlib.util import FileOperator, get_platform
+from io import BytesIO
 
 import os
 import pathlib
@@ -13,8 +17,11 @@ import textwrap
 import itertools
 import operator
 import subprocess
+import struct
 import binascii
 import codecs
+import time
+import re
 
 
 class PythonVirtualEnvironmentPackage(ConanFile):
@@ -506,8 +513,10 @@ class PythonVirtualEnv:
             self._conanfile.output.error(
                 f"The environment doesn't have a file {activate_this} -- please re-run virtualenv " "on this environment to update it"
             )
-        self._fixup_scripts(bin_dir)
-        self._fixup_executables(bin_dir)
+        patcher = ScriptPatcher(bin_dir, bin_dir, self._conanfile)
+        patcher.patch_scripts()
+        # self._fixup_scripts(bin_dir)
+        # self._fixup_executables(bin_dir)
         self._fixup_pth_and_egg_link(home_dir)
         self._patch_activate_scripts(bin_dir)
 
@@ -1025,3 +1034,213 @@ class PythonVirtualEnv:
         """
         self._conanfile.output.error(f"No patch algorithm for 'nu' is available to patch {activate}. Contributions are welcome. Unable to make relocatable.")
         return
+
+class ScriptPatcher:
+
+    def __init__(self, source_dir, target_dir, conanfile, add_launchers=True, fileop=None):
+        self.source_dir = source_dir
+        self.target_dir = target_dir
+        self.add_launchers = add_launchers
+        self.clobber = True
+        self.set_mode = (os.name == 'posix') or (os.name == 'java' and os._name == 'posix')
+        self._fileop = fileop or FileOperator()
+        self._is_nt = os.name == 'nt' or (os.name == 'java' and os._name == 'nt')
+        self._conanfile = conanfile
+
+    @property
+    def _version(self):
+        return "{}.{}".format(*sys.version_info)
+
+    def _read_contents(self, file):
+        # Read in the contents of the script
+        if ".exe" in file and self._is_nt:
+            # Fortunately the exe's can be read as zip files
+            zip_contents = ZipFile(file)
+            with zip_contents.open("__main__.py") as zf:
+                contents = zf.read().decode("utf-8")
+        else:
+            with open(file) as f:
+                contents = f.read()
+        return contents
+
+    def _build_shebang(self, executable, interpreter, executable_args=[], interpreter_args=[]):
+        executable_args = "" if not executable_args else f" {' '.join(executable_args)}"
+        interpreter_args = "" if not interpreter_args else f" {' '.join(interpreter_args)}"
+        return f"#!{executable}{executable_args} {interpreter}{interpreter_args}\n"
+
+    def _make_shebang(self):
+        if self._is_nt:
+            executable = os.path.normcase(os.environ.get("COMSPEC", "cmd.exe"))
+            executable_args = ["/c"]
+            interpreter = "python.exe"
+            interpreter_args = []
+        else:
+            executable = "/usr/bin/env"
+            executable_args = []
+            interpreter = f"python{self._version}"
+            interpreter_args = []
+
+        return self._build_shebang(executable, interpreter, executable_args, interpreter_args)
+
+    def _remove_shebang(self, contents):
+        shebang_pattern = re.compile(r'^#!.*$')
+        contents = "\n".join([line for line in contents.splitlines() if not shebang_pattern.match(line)])
+        return contents
+
+    def _patch_contents(self, contents):
+        # Patch the contents of a file
+
+        search_string = "import re"
+        # file needs to account for the fact that __file__ is within a zip file
+        # on windows but not on *nix
+        activate = (
+            "import os; "
+            "import sys; "
+            "file=os.path.dirname(os.path.realpath(__file__)) if sys.platform=='win32' else os.path.realpath(__file__); "
+            "activate_this=os.path.join(os.path.dirname(file), 'activate_this.py'); "
+            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
+            "del os, sys, file, activate_this"
+        )
+        substitution_string = f"{activate}\n{search_string}"
+        # Insert activate_this
+        #contents = contents.replace(search_string, substitution_string)
+        contents = activate + "\n" + contents
+        return contents
+
+    def _write_script(self, name, shebang, script_bytes, ext=None):
+        # We only want to patch a file with a launcher if it's already using a
+        # launcher (i.e., a .exe file. Leave .py files alone)
+        use_launcher = self.add_launchers and self._is_nt and name.endswith('.exe')
+        linesep = os.linesep.encode('utf-8')
+        if not shebang.endswith(linesep):
+            shebang += linesep
+        if not use_launcher:
+            script_bytes = shebang + script_bytes
+        else:  # pragma: no cover
+            if ext == 'py':
+                launcher = self._get_launcher('t')
+            else:
+                launcher = self._get_launcher('w')
+            stream = BytesIO()
+            with ZipFile(stream, 'w') as zf:
+                source_date_epoch = os.environ.get('SOURCE_DATE_EPOCH')
+                if source_date_epoch:
+                    date_time = time.gmtime(int(source_date_epoch))[:6]
+                    zinfo = ZipInfo(filename='__main__.py', date_time=date_time)
+                    zf.writestr(zinfo, script_bytes)
+                else:
+                    zf.writestr('__main__.py', script_bytes)
+            zip_data = stream.getvalue()
+            script_bytes = launcher + shebang + zip_data
+
+        outname = os.path.join(self.target_dir, name)
+        if use_launcher:  # pragma: no cover
+            n, e = os.path.splitext(outname)
+            if e.startswith('.py') or e.startswith('.exe'):
+                outname = n
+            outname = '%s.exe' % outname
+            try:
+                self._conanfile.output.info(f"Writing {outname=}")
+                self._fileop.write_binary_file(outname, script_bytes)
+            except Exception:
+                # Failed writing an executable - it might be in use.
+                self._conanfile.output.warning('Failed to write executable - trying to '
+                               'use .deleteme logic')
+                dfname = '%s.deleteme' % outname
+                if os.path.exists(dfname):
+                    os.remove(dfname)       # Not allowed to fail here
+                os.rename(outname, dfname)  # nor here
+                self._fileop.write_binary_file(outname, script_bytes)
+                self._conanfile.output.debug('Able to replace executable using '
+                             '.deleteme logic')
+                try:
+                    os.remove(dfname)
+                except Exception:
+                    pass    # still in use - ignore error
+        else:
+            if self._is_nt and not outname.endswith('.' + ext):  # pragma: no cover
+                outname = '%s.%s' % (outname, ext)
+                self._conanfile.output.info(f"Renaming {outname=}")
+            if os.path.exists(outname) and not self.clobber:
+                self._conanfile.output.warning('Skipping existing file %s', outname)
+                return
+            self._conanfile.output.info(f"Writing {outname=}")
+            self._fileop.write_binary_file(outname, script_bytes)
+            if self.set_mode:
+                self._fileop.set_executable_mode([outname])
+
+    if os.name == 'nt' or (os.name == 'java' and os._name == 'nt'):  # pragma: no cover
+        # Executable launcher support.
+        # Launchers are from https://bitbucket.org/vinay.sajip/simple_launcher/
+
+        def _get_launcher(self, kind):
+            if struct.calcsize('P') == 8:   # 64-bit
+                bits = '64'
+            else:
+                bits = '32'
+            platform_suffix = '-arm' if get_platform() == 'win-arm64' else ''
+            name = '%s%s%s.exe' % (kind, bits, platform_suffix)
+            # Use distlib from pip
+            # Issue 31 in distlib repo isn't a concern, we don't need dynamic
+            # discovery
+            distlib_package = 'pip._vendor.distlib'
+            resource = finder(distlib_package).find(name)
+            if not resource:
+                msg = ('Unable to find resource %s in package %s' % (name,
+                       distlib_package))
+                raise ValueError(msg)
+            return resource.bytes
+
+    def _patch_script(self, filename):
+        contents = self._read_contents(filename)
+        if "activate_this" in contents:
+            self._conanfile.output.info(f"{filename} has already been patched")
+            return 
+        contents = self._remove_shebang(contents)
+        shebang = self._make_shebang().encode("utf-8")
+        script = self._patch_contents(contents).encode("utf-8")
+        ext = "py"
+        self._write_script(filename, shebang, script, ext)
+
+    @property
+    def _version(self):
+        return "{}.{}".format(*sys.version_info)
+
+    @property
+    def _python_version(self):
+        return f"python{self._version}"
+
+    # Public API follows
+
+    def patch(self, filename):
+        """
+        Patch a script.
+        """
+        self._patch_script(filename)
+
+    def patch_scripts(self):
+        interpreter = "python"
+        dont_patch_files = [
+            "python",
+            "python.exe",
+            "python3.exe",
+            "pythonw.exe",
+            self._python_version,
+            "activate",
+            "activate.sh",
+            "activate.bat",
+            "activate_this.py",
+            "activate.fish",
+            "activate.csh",
+            "activate.xsh",
+            "activate.nu",
+            "Activate.ps1",
+            "deactivate.bat",
+        ]
+        for filename in os.listdir(self.source_dir):
+            filename = os.path.join(self.source_dir, filename)
+            if not os.path.isfile(filename):
+                continue
+            if os.path.basename(filename) not in dont_patch_files:
+                self.patch(filename)
+
