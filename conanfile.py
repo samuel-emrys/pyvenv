@@ -23,7 +23,7 @@ from pip._vendor.distlib.util import FileOperator, get_platform
 
 class PythonVirtualEnvironmentPackage(ConanFile):
     name = "pyvenv"
-    version = "0.2.1"
+    version = "0.2.2"
     url = "https://github.com/samuel-emrys/pyvenv.git"
     homepage = "https://github.com/samuel-emrys/pyvenv.git"
     license = "MIT"
@@ -224,7 +224,6 @@ class PythonVirtualEnv:
             if (Version(conan_version).major >= 2)
             else self._conanfile.output.info
         )
-        self._conanfile.output.info(f"Version = {Version(conan_version).major}")
 
     def create(
         self,
@@ -646,7 +645,6 @@ class ScriptPatcher:
                 contents = zf.read().decode("utf-8")
         else:
             with open(file) as f:
-                self._conanfile.output.info(f"Reading {file}")
                 contents = f.read()
         return contents
 
@@ -738,7 +736,6 @@ class ScriptPatcher:
                 outname = n
             outname = "%s.exe" % outname
             try:
-                self._conanfile.output.info(f"Writing {outname=}")
                 self._fileop.write_binary_file(outname, script_bytes)
             except Exception:
                 # Failed writing an executable - it might be in use.
@@ -764,7 +761,6 @@ class ScriptPatcher:
             if os.path.exists(outname) and not self.clobber:
                 self._conanfile.output.warning("Skipping existing file %s", outname)
                 return
-            self._conanfile.output.info(f"Writing {outname=}")
             self._fileop.write_binary_file(outname, script_bytes)
             if self.set_mode:
                 self._fileop.set_executable_mode([outname])
@@ -796,7 +792,7 @@ class ScriptPatcher:
     def _patch_program_script(self, filename):
         contents = self._read_contents(filename)
         if "activate_this" in contents:
-            self._conanfile.output.info(f"{filename} has already been patched")
+            self._conanfile.output.warning(f"{filename} has already been patched")
             return
         contents = self._remove_shebang(contents)
         shebang = self._make_shebang().encode("utf-8")
@@ -1198,8 +1194,10 @@ class ScriptPatcher:
         if base_filename in self._dont_patch:
             return
         if base_filename in self._activation_scripts:
+            self._conanfile.output.info(f"Making {filename} relocatable.")
             self._patch_activate_script(filename)
         else:
+            self._conanfile.output.info(f"Making {filename} relocatable.")
             self._patch_program_script(filename)
 
     def patch_scripts(self):
