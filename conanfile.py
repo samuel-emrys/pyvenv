@@ -1,36 +1,37 @@
+import itertools
+import operator
+import os
+import pathlib
+import re
+import struct
+import subprocess
+import sys
+import textwrap
+import time
+from contextlib import contextmanager
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile, ZipInfo
+
 from conan import ConanFile, conan_version
 from conan.tools.env import Environment
 from conan.tools.files import replace_in_file
 from conan.tools.scm import Version
-from pathlib import Path
-from contextlib import contextmanager
-from zipfile import ZipInfo, ZipFile
 from pip._vendor.distlib.resources import finder
 from pip._vendor.distlib.util import FileOperator, get_platform
-from io import BytesIO
-
-import os
-import pathlib
-import sys
-import json
-import textwrap
-import itertools
-import operator
-import subprocess
-import struct
-import binascii
-import codecs
-import time
-import re
 
 
 class PythonVirtualEnvironmentPackage(ConanFile):
     name = "pyvenv"
-    version = "0.2.0"
+    version = "0.2.1"
     url = "https://github.com/samuel-emrys/pyvenv.git"
     homepage = "https://github.com/samuel-emrys/pyvenv.git"
     license = "MIT"
-    description = "A python_requires library providing a management class for python virtual environments and a CMake generator to expose executables in those virtual environments as CMake targets"
+    description = (
+        "A python_requires library providing a management class for python "
+        "virtual environments and a CMake generator to expose executables in "
+        "those virtual environments as CMake targets"
+    )
     topics = ("Python", "Virtual Environment", "CMake", "venv")
     no_copy_source = True
     package_type = "python-require"
@@ -38,17 +39,19 @@ class PythonVirtualEnvironmentPackage(ConanFile):
 
 def args_to_string(args):
     """
-    Convert a list of arguments to a command line string in an operating system agnostic way
+    Convert a list of arguments to a command line string in an operating
+    system agnostic way
 
     :param args: A list of the arguments to provide to the command line
     :type args: list(str)
     """
     if not args:
         return ""
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         return subprocess.list2cmdline(args)
     else:
         return " ".join("'" + arg.replace("'", r"'\''") + "'" for arg in args)
+
 
 def _which(files, paths, access=os.F_OK | os.X_OK):
     """
@@ -64,18 +67,23 @@ def _which(files, paths, access=os.F_OK | os.X_OK):
             if any(cmd.lower().endswith(ext.lower()) for ext in pathext):
                 yield cmd  # already has an extension, so check only that one
             else:
-                yield from (cmd + ext for ext in pathext)  # check all possibilities
+                # check all possibilities
+                yield from (cmd + ext for ext in pathext)
 
         files = [x for cmd in files for x in expand_pathext(cmd)]
 
-        # Windows filesystems are (usually) case-insensitive, so match might be spelled differently than the searched name
-        # And in particular, the extensions from PATHEXT are usually uppercase, and yet the real file seldom is.
-        # Using pathlib.resolve() for now because os.path.realpath() was a no-op on win32
-        # until nt symlink support landed in python 3.9 (based on GetFinalPathNameByHandleW)
+        # Windows filesystems are (usually) case-insensitive, so match might be
+        # spelled differently than the searched name.
+        # And in particular, the extensions from PATHEXT are usually uppercase,
+        # and yet the real file seldom is.
+        # Using pathlib.resolve() for now because os.path.realpath() was a
+        # no-op on win32 until nt symlink support landed in python 3.9 (based
+        # on GetFinalPathNameByHandleW)
         # https://github.com/python/cpython/commit/75e064962ee0e31ec19a8081e9d9cc957baf6415
         #
-        # realname() canonicalizes *only* the searched-for filename, but keeps the caller-provided path verbatim:
-        # they might have been short paths, or via some symlink, and that's fine
+        # realname() canonicalizes *only* the searched-for filename, but
+        # keeps the caller-provided path verbatim: they might have been short
+        # paths, or via some symlink, and that's fine
 
         def realname(file):
             path = Path(file)
@@ -98,6 +106,7 @@ def _which(files, paths, access=os.F_OK | os.X_OK):
                 return realname(filepath)
     return None
 
+
 def _default_python():
     """
     Identify the default python interpreter.
@@ -106,12 +115,13 @@ def _default_python():
 
     if hasattr(
         sys, "real_prefix"
-    ):  # in a virtualenv, which sets this instead of base_exec_prefix like venv
+    ):  # in a venv, which sets this instead of base_exec_prefix like venv
         base_exec_prefix = getattr(sys, "real_prefix")
 
     if sys.exec_prefix != base_exec_prefix:  # alread running in a venv
-        # we want to create the new virtualenv off the base python installation,
-        # rather than create a grandchild (child of of the current venv)
+        # we want to create the new virtualenv off the base python
+        # installation, rather than create a grandchild (child of of
+        # the current venv)
         names = [os.path.basename(sys.executable), "python3", "python"]
 
         prefixes = [base_exec_prefix]
@@ -132,23 +142,30 @@ def _default_python():
     else:
         return sys.executable
 
+
 def _write_activate_this(env_dir, bin_dir, lib_dirs):
     """
     Write an activate_this.py to env_dir. This fills a gap where this isn't
-    created by default by the `venv` module. This borrows the implementation from `virtualenv`.
+    created by default by the `venv` module. This borrows the implementation
+    from `virtualenv`.
 
     :param env_dir: The path to the virtual environment directory
     :type env_dir: str
-    :param bin_dir: The name of the platform specific binary directory. `Scripts` or `bin`.
+    :param bin_dir: The name of the platform specific binary directory.
+    `Scripts` or `bin`.
     :type bin_dir: str
-    :param lib_dirs: A list of the environment library directories to search when activate_this.py is used
+    :param lib_dirs: A list of the environment library directories to
+    search when activate_this.py is used
     :type lib_dirs: list(str)
     """
     win_py2 = sys.platform == "win32" and sys.version_info.major == 2
-    decode_path = ("yes" if win_py2 else "")
-    lib_dirs = [os.path.relpath(libdir, os.path.join(env_dir, bin_dir)) for libdir in lib_dirs]
+    decode_path = "yes" if win_py2 else ""
+    lib_dirs = [
+        os.path.relpath(libdir, os.path.join(env_dir, bin_dir)) for libdir in lib_dirs
+    ]
     lib_dirs = os.pathsep.join(lib_dirs)
-    contents = textwrap.dedent(f"""\
+    contents = textwrap.dedent(
+        f"""\
         import os
         import site
         import sys
@@ -174,16 +191,19 @@ def _write_activate_this(env_dir, bin_dir, lib_dirs):
 
         sys.real_prefix = sys.prefix
         sys.prefix = base
-    """)
+    """
+    )
 
     with open(os.path.join(env_dir, bin_dir, "activate_this.py"), "w") as f:
         f.write(contents)
+
 
 # build helper for making and managing python virtual environments
 class PythonVirtualEnv:
     """
     A build helper for creating and managing python virtual environments
     """
+
     def __init__(self, conanfile, interpreter=_default_python(), env_folder=None):
         """
         Create a PythonVirtualEnv object
@@ -199,10 +219,22 @@ class PythonVirtualEnv:
         self._conanfile = conanfile
         self.base_python = interpreter
         self.env_folder = env_folder
-        self._debug = self._conanfile.output.debug if (Version(conan_version).major >= 2) else self._conanfile.output.info
+        self._debug = (
+            self._conanfile.output.debug
+            if (Version(conan_version).major >= 2)
+            else self._conanfile.output.info
+        )
         self._conanfile.output.info(f"Version = {Version(conan_version).major}")
 
-    def create(self, folder, *, clear=True, symlinks=(os.name != "nt"), with_pip=True, requirements=[]):
+    def create(
+        self,
+        folder,
+        *,
+        clear=True,
+        symlinks=(os.name != "nt"),
+        with_pip=True,
+        requirements=[],
+    ):
         """
         Create a virtual environment
         symlink logic borrowed from python -m venv
@@ -243,7 +275,7 @@ class PythonVirtualEnv:
                 args_to_string(
                     [self.base_python, "-mvenv", *venv_options, self.env_folder]
                 ),
-                env="conanbuild"
+                env="conanbuild",
             )
         else:
             # fallback to using the python this script is running in
@@ -255,11 +287,12 @@ class PythonVirtualEnv:
 
         if requirements:
             self._conanfile.run(
-                args_to_string([self.pip, "install", *requirements]),
-                env="conanbuild"
+                args_to_string([self.pip, "install", *requirements]), env="conanbuild"
             )
 
-        _write_activate_this(env_dir=self.env_folder, bin_dir=self.bin_dir, lib_dirs=self.libpath)
+        _write_activate_this(
+            env_dir=self.env_folder, bin_dir=self._bin_dir, lib_dirs=self._libpath
+        )
         self.make_relocatable(env_folder=self.env_folder)
 
     def entry_points(self, package=None):
@@ -273,7 +306,7 @@ class PythonVirtualEnv:
         entry_points = itertools.chain.from_iterable(
             dist.entry_points
             for dist in importlib.metadata.distributions(
-                name=package, path=self.libpath
+                name=package, path=self._libpath
             )
         )
 
@@ -319,10 +352,11 @@ class PythonVirtualEnv:
             root, ext = os.path.splitext(path)
             self._conanfile.output.info(f"{name} split into {root}, {ext}")
 
-
             try:
                 # copy venv script to target folder
-                self._conanfile.output.info(f"Attempting to copy {path} to {target_folder}")
+                self._conanfile.output.info(
+                    f"Attempting to copy {path} to {target_folder}"
+                )
                 shutil.copy2(path, target_folder)
 
                 # copy entry point script
@@ -333,10 +367,14 @@ class PythonVirtualEnv:
                     ext = "-script.py"
 
                 entry_point_script = root + ext
-                self._conanfile.output.info(f"Entry point script evaluated to {entry_point_script}")
+                self._conanfile.output.info(
+                    f"Entry point script evaluated to {entry_point_script}"
+                )
 
                 if os.path.isfile(entry_point_script):
-                    self._conanfile.output.info(f"Attempting to copy {entry_point_script} to {target_folder}")
+                    self._conanfile.output.info(
+                        f"Attempting to copy {entry_point_script} to {target_folder}"
+                    )
                     shutil.copy2(entry_point_script, target_folder)
             except shutil.SameFileError:
                 # SameFileError if the launcher script is *already* in the target_folder
@@ -353,7 +391,6 @@ class PythonVirtualEnv:
         for name in entry_points.get("gui_scripts", []):
             self._conanfile.output.info(f"Adding entry point for {name}")
             copy_executable(name, folder, type="gui")
-
 
     @property
     def _version(self):
@@ -376,34 +413,18 @@ class PythonVirtualEnv:
         return getattr(sys, "abiflags", "")
 
     @property
-    def _no_shebang_scripts(self):
-        return [
-            "python",
-            self._python_version,
-            "activate",
-            "activate.sh",
-            "activate.bat",
-            "activate_this.py",
-            "activate.fish",
-            "activate.csh",
-            "activate.xsh",
-            "activate.nu",
-            "Activate.ps1",
-        ]
-
-    @property
-    def bin_dir(self):
+    def _bin_dir(self):
         return "Scripts" if self._is_win else "bin"
 
     @property
-    def binpath(self):
+    def _binpath(self):
         # this should be the same logic as as
         # context.bin_name = ... in venv.ensure_directories
-        bindirs = [self.bin_dir]
+        bindirs = [self._bin_dir]
         return [os.path.join(self.env_folder, x) for x in bindirs]
 
     @property
-    def libpath(self):
+    def _libpath(self):
         # this should be the same logic as as
         # libpath = ... in venv.ensure_directories
         if self._is_win:
@@ -419,12 +440,12 @@ class PythonVirtualEnv:
 
     # return the path to a command within the venv, None if only found outside
     def which(self, command, required=False, **kwargs):
-        found = _which(command, self.binpath, **kwargs)
+        found = _which(command, self._binpath, **kwargs)
         if found:
             return found
         elif required:
             raise FileNotFoundError(
-                f"command {command} not in venv binpath {os.pathsep.join(self.binpath)}"
+                f"command {command} not in venv binpath {os.pathsep.join(self._binpath)}"
             )
         else:
             return None
@@ -449,7 +470,7 @@ class PythonVirtualEnv:
         return self.which("pip", required=True)
 
     @property
-    def env(self):
+    def _env(self):
         """
         environment variables like the usual venv `activate` script, i.e.
         with tools.environment_append(venv.env):
@@ -459,7 +480,7 @@ class PythonVirtualEnv:
             "__PYVENV_LAUNCHER__": None,  # this might already be set if conan was launched through a venv
             "PYTHONHOME": None,
             "VIRTUAL_ENV": self.env_folder,
-            "PATH": self.binpath,
+            "PATH": self._binpath,
         }
 
     @contextmanager
@@ -473,9 +494,9 @@ class PythonVirtualEnv:
             ...
         """
         old_path = sys.path[:]
-        sys.path.extend(self.libpath)
+        sys.path.extend(self._libpath)
         env = Environment()
-        for k, v in self.env.items():
+        for k, v in self._env.items():
             env.define(k, v)
         envvars = env.vars(self._conanfile, scope="build")
         with envvars.apply():
@@ -507,18 +528,16 @@ class PythonVirtualEnv:
         :param env_folder: The path to the virtual environment to make relocatable
         :type env_folder: str
         """
-        home_dir, lib_dir, inc_dir, bin_dir = self._path_locations(env_folder)
+        env_dir, lib_dir, inc_dir, bin_dir = self._path_locations(env_folder)
         activate_this = os.path.join(bin_dir, "activate_this.py")
         if not os.path.exists(activate_this):
             self._conanfile.output.error(
-                f"The environment doesn't have a file {activate_this} -- please re-run virtualenv " "on this environment to update it"
+                f"The environment doesn't have a file {activate_this} -- please re-run virtualenv "
+                "on this environment to update it"
             )
-        patcher = ScriptPatcher(bin_dir, bin_dir, self._conanfile)
+        patcher = ScriptPatcher(env_dir, bin_dir, lib_dir, inc_dir, self._conanfile)
         patcher.patch_scripts()
-        # self._fixup_scripts(bin_dir)
-        # self._fixup_executables(bin_dir)
-        self._fixup_pth_and_egg_link(home_dir)
-        self._patch_activate_scripts(bin_dir)
+        patcher.patch_resources()
 
     def _path_locations(self, home_dir):
         """
@@ -565,159 +584,261 @@ class PythonVirtualEnv:
             bin_dir = os.path.join(home_dir, "bin")
         elif not self._is_win:
             lib_dir = os.path.join(home_dir, "lib", self._python_version)
-            inc_dir = os.path.join(home_dir, "include", self._python_version + self._abi_flags)
+            inc_dir = os.path.join(
+                home_dir, "include", self._python_version + self._abi_flags
+            )
             bin_dir = os.path.join(home_dir, "bin")
         return home_dir, lib_dir, inc_dir, bin_dir
 
-    def _fixup_scripts(self, bin_dir):
-        """
-        Replaces the shebang (or windows equivalent) with a relative python path and invocation of activate_this.py
-        Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L1919-L1966
-        MIT License
-        :param bin_dir: The path to the virtual environment binary directory
-        :type bin_dir: str
-        """
-        if self._is_win:
-            new_shebang_args = ("{} /c".format(os.path.normcase(os.environ.get("COMSPEC", "cmd.exe"))), "", ".exe")
-        else:
-            new_shebang_args = ("/usr/bin/env", self._version, "")
 
-        # This is what we expect at the top of scripts:
-        shebang = "#!{}".format(
-            os.path.normcase(os.path.join(os.path.abspath(bin_dir), "python{}".format(new_shebang_args[2])))
+class ScriptPatcher:
+    """
+    Class to manage patching files within a virtual environment to make them relocatable.
+    This is achieved mostly through the replacement of a virtual environment-specific shebang
+    with one that invokes the system python interpreter, and the insertion of a script to
+    invoke activate_this.py.
+
+    On windows, this will read the contents of scripts wrapped into executables with a python
+    launcher, and then write a newly wrapped script out.
+
+    This has been derived from distlib's ScriptMaker:
+    https://github.com/pypa/distlib/blob/05375908c1b2d6b0e74bdeb574569d3609db9f56/distlib/scripts.py#L71-L438
+    """
+
+    def __init__(
+        self,
+        env_dir,
+        bin_dir,
+        lib_dir,
+        inc_dir,
+        conanfile,
+        add_launchers=True,
+        fileop=None,
+    ):
+        self.env_dir = env_dir
+        self.bin_dir = bin_dir
+        self.lib_dir = lib_dir
+        self.inc_dir = inc_dir
+        self.add_launchers = add_launchers
+        self.clobber = True
+        self.set_mode = (os.name == "posix") or (
+            os.name == "java" and os._name == "posix"
         )
-        # This is what we'll put:
-        new_shebang = "#!{} python{}{}".format(*new_shebang_args)
+        self._fileop = fileop or FileOperator()
+        self._is_nt = os.name == "nt" or (os.name == "java" and os._name == "nt")
+        self._conanfile = conanfile
+        self._debug = (
+            self._conanfile.output.debug
+            if (Version(conan_version).major >= 2)
+            else self._conanfile.output.info
+        )
 
-        for filename in os.listdir(bin_dir):
-            filename = os.path.join(bin_dir, filename)
-            if not os.path.isfile(filename):
-                # ignore child directories, e.g. .svn ones.
-                continue
-            with open(filename, "rb") as f:
-                try:
-                    lines = f.read().decode("utf-8").splitlines()
-                except UnicodeDecodeError:
-                    # This is probably a binary program instead
-                    # of a script, so just ignore it.
-                    continue
-            if not lines:
-                self._conanfile.output.warning(f"Script {filename} is an empty file")
-                continue
+    @property
+    def _version(self):
+        return "{}.{}".format(*sys.version_info)
 
-            old_shebang = lines[0].strip()
-            old_shebang = old_shebang[0:2] + os.path.normcase(old_shebang[2:])
+    def _read_contents(self, file):
+        # Read in the contents of the script
+        if ".exe" in file and self._is_nt:
+            # Fortunately the exe's can be read as zip files
+            zip_contents = ZipFile(file)
+            with zip_contents.open("__main__.py") as zf:
+                contents = zf.read().decode("utf-8")
+        else:
+            with open(file) as f:
+                self._conanfile.output.info(f"Reading {file}")
+                contents = f.read()
+        return contents
 
-            if not old_shebang.startswith(shebang):
-                if os.path.basename(filename) in self._no_shebang_scripts:
-                    # These scripts will be patched by in a separate stage by self._patch_activate_scripts
-                    continue
-                elif lines[0].strip() == new_shebang:
-                    self._debug(f"Script {filename} has already been made relative")
+    def _build_shebang(
+        self, executable, interpreter, executable_args=[], interpreter_args=[]
+    ):
+        executable_args = "" if not executable_args else f" {' '.join(executable_args)}"
+        interpreter_args = (
+            "" if not interpreter_args else f" {' '.join(interpreter_args)}"
+        )
+        return f"#!{executable}{executable_args} {interpreter}{interpreter_args}\n"
+
+    def _make_shebang(self):
+        if self._is_nt:
+            executable = os.path.normcase(os.environ.get("COMSPEC", "cmd.exe"))
+            executable_args = ["/c"]
+            interpreter = "python.exe"
+            interpreter_args = []
+        else:
+            executable = "/usr/bin/env"
+            executable_args = []
+            interpreter = f"python{self._version}"
+            interpreter_args = []
+
+        return self._build_shebang(
+            executable, interpreter, executable_args, interpreter_args
+        )
+
+    def _remove_shebang(self, contents):
+        shebang_pattern = re.compile(r"^#!.*$")
+        contents = "\n".join(
+            [line for line in contents.splitlines() if not shebang_pattern.match(line)]
+        )
+        return contents
+
+    def _patch_contents(self, contents):
+        """
+        Patch the contents of a file by adding an activation script to invoke activate_this.py in the same directory
+
+        :param contents: The file contents to be patched
+        :type contents: str
+        :return: The patched contents
+        :rtype: str
+        """
+
+        # file needs to account for the fact that __file__ is within a zip file
+        # on windows but not on *nix
+        activate = (
+            "import os; "
+            "import sys; "
+            "file=os.path.dirname(os.path.realpath(__file__)) if sys.platform=='win32' else os.path.realpath(__file__); "
+            "activate_this=os.path.join(os.path.dirname(file), 'activate_this.py'); "
+            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
+            "del os, sys, file, activate_this"
+        )
+        contents = activate + "\n" + contents
+        return contents
+
+    def _write_script(self, name, shebang, script_bytes, ext=None):
+        # We only want to patch a file with a launcher if it's already using a
+        # launcher (i.e., a .exe file. Leave .py files alone)
+        use_launcher = self.add_launchers and self._is_nt and name.endswith(".exe")
+        linesep = os.linesep.encode("utf-8")
+        if not shebang.endswith(linesep):
+            shebang += linesep
+        if not use_launcher:
+            script_bytes = shebang + script_bytes
+        else:  # pragma: no cover
+            if ext == "py":
+                launcher = self._get_launcher("t")
+            else:
+                launcher = self._get_launcher("w")
+            stream = BytesIO()
+            with ZipFile(stream, "w") as zf:
+                source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+                if source_date_epoch:
+                    date_time = time.gmtime(int(source_date_epoch))[:6]
+                    zinfo = ZipInfo(filename="__main__.py", date_time=date_time)
+                    zf.writestr(zinfo, script_bytes)
                 else:
-                    self._conanfile.output.warning(
-                        f"Script {filename} cannot be made relative (it's not a normal script that starts with {shebang})"
-                    )
-                continue
-            self._conanfile.output.info(f"Making script {filename} relative")
-            script = self._relative_script([new_shebang] + lines[1:])
-            with open(filename, "wb") as f:
-                f.write("\n".join(script).encode("utf-8"))
+                    zf.writestr("__main__.py", script_bytes)
+            zip_data = stream.getvalue()
+            script_bytes = launcher + shebang + zip_data
 
-    def _fixup_executables(self, bin_dir):
+        outname = os.path.join(self.bin_dir, name)
+        if use_launcher:  # pragma: no cover
+            n, e = os.path.splitext(outname)
+            if e.startswith(".py") or e.startswith(".exe"):
+                outname = n
+            outname = "%s.exe" % outname
+            try:
+                self._conanfile.output.info(f"Writing {outname=}")
+                self._fileop.write_binary_file(outname, script_bytes)
+            except Exception:
+                # Failed writing an executable - it might be in use.
+                self._conanfile.output.warning(
+                    "Failed to write executable - trying to " "use .deleteme logic"
+                )
+                dfname = "%s.deleteme" % outname
+                if os.path.exists(dfname):
+                    os.remove(dfname)  # Not allowed to fail here
+                os.rename(outname, dfname)  # nor here
+                self._fileop.write_binary_file(outname, script_bytes)
+                self._conanfile.output.debug(
+                    "Able to replace executable using " ".deleteme logic"
+                )
+                try:
+                    os.remove(dfname)
+                except Exception:
+                    pass  # still in use - ignore error
+        else:
+            if self._is_nt and not outname.endswith("." + ext):  # pragma: no cover
+                outname = "%s.%s" % (outname, ext)
+                self._conanfile.output.info(f"Renaming {outname=}")
+            if os.path.exists(outname) and not self.clobber:
+                self._conanfile.output.warning("Skipping existing file %s", outname)
+                return
+            self._conanfile.output.info(f"Writing {outname=}")
+            self._fileop.write_binary_file(outname, script_bytes)
+            if self.set_mode:
+                self._fileop.set_executable_mode([outname])
 
-        if not self._is_win:
-            # Unix binaries don't need to be fixed
+    if os.name == "nt" or (os.name == "java" and os._name == "nt"):  # pragma: no cover
+        # Executable launcher support.
+        # Launchers are from https://bitbucket.org/vinay.sajip/simple_launcher/
+        # This will extract the launcher binary from the distlib module
+        def _get_launcher(self, kind):
+            if struct.calcsize("P") == 8:  # 64-bit
+                bits = "64"
+            else:
+                bits = "32"
+            platform_suffix = "-arm" if get_platform() == "win-arm64" else ""
+            name = "%s%s%s.exe" % (kind, bits, platform_suffix)
+            # Use distlib from pip
+            # Issue 31 in distlib repo isn't a concern, we don't need dynamic
+            # discovery
+            distlib_package = "pip._vendor.distlib"
+            resource = finder(distlib_package).find(name)
+            if not resource:
+                msg = "Unable to find resource %s in package %s" % (
+                    name,
+                    distlib_package,
+                )
+                raise ValueError(msg)
+            return resource.bytes
+
+    def _patch_program_script(self, filename):
+        contents = self._read_contents(filename)
+        if "activate_this" in contents:
+            self._conanfile.output.info(f"{filename} has already been patched")
             return
-        decode_hex = codecs.getdecoder("hex_codec")
-        encode_hex = codecs.getencoder("hex_codec")
-        interpreter = "python.exe"
-        dont_patch_files = [
-            interpreter,
+        contents = self._remove_shebang(contents)
+        shebang = self._make_shebang().encode("utf-8")
+        script = self._patch_contents(contents).encode("utf-8")
+        ext = "py"
+        self._write_script(filename, shebang, script, ext)
+
+    @property
+    def _version(self):
+        return "{}.{}".format(*sys.version_info)
+
+    @property
+    def _python_version(self):
+        return f"python{self._version}"
+
+    @property
+    def _dont_patch(self):
+        return [
+            "python",
+            "python3",
+            self._python_version,
+            "python.exe",
+            "python3.exe",
             "pythonw.exe",
+            "activate_this.py",
         ]
 
-        # The shebang line replacement
-        shebang_search = f"#!{os.path.normcase(os.path.join(bin_dir, interpreter))}".encode("utf-8")
-        self._debug(f"{shebang_search=}")
-        cmd = os.path.normcase(os.path.join('C:\\', 'Windows', 'system32', 'cmd.exe'))
-        shebang_replace = f"#!{cmd} /c {interpreter}".encode("utf-8")
-        self._debug(f"{shebang_replace=}")
+    @property
+    def _activation_scripts(self):
+        return [
+            "activate",
+            "activate.sh",
+            "activate.bat",
+            "activate.fish",
+            "activate.csh",
+            "activate.xsh",
+            "activate.nu",
+            "Activate.ps1",
+            "deactivate.bat",
+        ]
 
-        # Pull in the activation script to run when executing the executable
-        #utf_header = "-*- coding: utf-8 -*-".encode("utf-8")
-        search_string = "import sys".encode("utf-8")
-        activate = (
-            "import os; "
-            "activate_this=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'activate_this.py'); "
-            "print(activate_this); "
-            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
-            "del os, activate_this"
-        )
-        activation_insertion = f"".encode("utf-8")
-        #activation_insertion = f"{activate}\n{search_string.decode('utf-8')}".encode("utf-8")
-        #activation_insertion = f"{activate}\n{utf_header.decode('utf-8')}".encode("utf-8")
-        #activation_insertion = f"{utf_header.decode('utf-8')}".encode("utf-8")
-        self._debug(f"{activation_insertion=}")
-
-        for filename in os.listdir(bin_dir):
-            filename = os.path.join(bin_dir, filename)
-            if not os.path.isfile(filename):
-                continue
-            if ".exe" in filename and filename not in dont_patch_files:
-                self._conanfile.output.info(f"Making {filename} relative")
-                contents_hex = []
-                with open(filename, "rb") as f:
-                    for chunk in iter(lambda: f.read(32), b''):
-                        contents_hex.append(binascii.hexlify(chunk))
-                # Combine all binary contents into one big byte string instead of a [(content, size), (content,size)]
-                contents = b"".join([decode_hex(element)[0] for element in contents_hex])
-
-                if b"system32" in contents:
-                    self._debug(f"{filename} has already been patched.")
-                    continue
-                # Find and replace in big byte string
-                # patched = contents.replace(shebang_search, shebang_replace)
-                patched = contents.replace(search_string, activation_insertion)
-                # Reconstruct the binary form of the file before re-writing it out
-                patched_chunked = [patched[i:i+32] for i in range(0, len(patched), 32)]
-                patched_hex = [encode_hex(element)[0] for element in patched_chunked]
-
-                with open(filename, "wb") as f:
-                    for chunk in patched_hex:
-                        f.write(binascii.unhexlify(chunk))
-
-
-    def _relative_script(self, lines):
-        """
-        Return a script that'll work in a relocatable environment.
-        Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L1969-L1987
-        MIT License
-
-        :param lines: Raw contents of the script to patch
-        :type lines: list(str)
-        """
-        activate = (
-            "import os; "
-            "activate_this=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'activate_this.py'); "
-            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
-            "del os, activate_this"
-        )
-        # Find the last future statement in the script. If we insert the activation
-        # line before a future statement, Python will raise a SyntaxError.
-        activate_at = None
-        for idx, line in reversed(list(enumerate(lines))):
-            if line.split()[:3] == ["from", "__future__", "import"]:
-                activate_at = idx + 1
-                break
-        if activate_at is None:
-            # Activate after the shebang.
-            activate_at = 1
-        return lines[:activate_at] + ["", activate, ""] + lines[activate_at:]
-
-
-
-    def _fixup_pth_and_egg_link(self, home_dir, sys_path=None):
+    def _patch_pth_and_egg_link(self, home_dir, sys_path=None):
         """
         Makes .pth and .egg-link files use relative paths
         Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L1990-L2015
@@ -744,17 +865,20 @@ class PythonVirtualEnv:
                 filename = os.path.join(a_path, filename)
                 if filename.endswith(".pth"):
                     if not os.access(filename, os.W_OK):
-                        self._conanfile.output.warning(f"Cannot write .pth file {filename}, skipping")
+                        self._conanfile.output.warning(
+                            f"Cannot write .pth file {filename}, skipping"
+                        )
                     else:
-                        self._fixup_pth_file(filename)
+                        self._patch_pth_file(filename)
                 if filename.endswith(".egg-link"):
                     if not os.access(filename, os.W_OK):
-                        self._conanfile.output.warning(f"Cannot write .egg-link file {filename}, skipping")
+                        self._conanfile.output.warning(
+                            f"Cannot write .egg-link file {filename}, skipping"
+                        )
                     else:
-                        self._fixup_egg_link(filename)
+                        self._patch_egg_link(filename)
 
-
-    def _fixup_pth_file(self, filename):
+    def _patch_pth_file(self, filename):
         """
         Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L2018-L2036
         MIT License
@@ -767,12 +891,21 @@ class PythonVirtualEnv:
             prev_lines = f.readlines()
         for line in prev_lines:
             line = line.strip()
-            if not line or line.startswith("#") or line.startswith("import ") or os.path.abspath(line) != line:
+            if (
+                not line
+                or line.startswith("#")
+                or line.startswith("import ")
+                or os.path.abspath(line) != line
+            ):
                 lines.append(line)
             else:
                 new_value = self._make_relative_path(filename, line)
                 if line != new_value:
-                    self._debug("Rewriting path {} as {} (in {})".format(line, new_value, filename))
+                    self._debug(
+                        "Rewriting path {} as {} (in {})".format(
+                            line, new_value, filename
+                        )
+                    )
                 lines.append(new_value)
         if lines == prev_lines:
             self._conanfile.output.info(f"No changes to .pth file {filename}")
@@ -781,8 +914,7 @@ class PythonVirtualEnv:
         with open(filename, "w") as f:
             f.write("\n".join(lines) + "\n")
 
-
-    def _fixup_egg_link(self, filename):
+    def _patch_egg_link(self, filename):
         """
         Derived from https://github.com/pypa/virtualenv/blob/fb6e546cc1dfd0d363dc4d769486805d2d8f04bc/virtualenv.py#L2039-L2048
         MIT License
@@ -796,10 +928,11 @@ class PythonVirtualEnv:
             self._debug(f"Link in {filename} already relative")
             return
         new_link = self._make_relative_path(filename, link)
-        self._conanfile.output.info("Rewriting link {} in {} as {}".format(link, filename, new_link))
+        self._conanfile.output.info(
+            "Rewriting link {} in {} as {}".format(link, filename, new_link)
+        )
         with open(filename, "w") as f:
             f.write(new_link)
-
 
     def _make_relative_path(self, source, dest, dest_is_directory=True):
         """
@@ -844,29 +977,27 @@ class PythonVirtualEnv:
             return "./"
         return os.path.sep.join(full_parts)
 
-    def _patch_activate_scripts(self, bin_dir):
+    def _patch_activate_script(self, filename):
         """
         Patch the virtualenvs activation scripts such that they discover the virtualenv path dynamically
         rather than hardcoding it to make them robust to relocation.
 
-        :param bin_dir: The path to the folder in which the activation scripts to be patched lie.
+        :param filename: The filename to patch
         :type bin_dir: str
         """
-
         scripts = {
-            pathlib.Path(bin_dir, "activate"): self._patch_activate,
-            pathlib.Path(bin_dir, "activate.sh"): self._patch_activate,
-            pathlib.Path(bin_dir, "activate.bat"): self._patch_activate_bat,
-            pathlib.Path(bin_dir, "activate.fish"): self._patch_activate_fish,
-            pathlib.Path(bin_dir, "activate.csh"): self._patch_activate_csh,
-            #pathlib.Path(bin_dir, "activate.xsh"): self._patch_activate_xsh,
-            #pathlib.Path(bin_dir, "activate.nu"): self._patch_activate_nu,
+            "activate": self._patch_activate,
+            "activate.sh": self._patch_activate,
+            "activate.bat": self._patch_activate_bat,
+            "activate.fish": self._patch_activate_fish,
+            "activate.csh": self._patch_activate_csh,
+            # pathlib.Path(bin_dir, "activate.xsh"): self._patch_activate_xsh,
+            # pathlib.Path(bin_dir, "activate.nu"): self._patch_activate_nu,
         }
-
-        for script, patch in scripts.items():
-            if script.is_file():
-                self._conanfile.output.info(f"Making {script} relocatable.")
-                patch(script)
+        file_basename = os.path.basename(filename)
+        if file_basename in scripts:
+            patch = scripts[file_basename]
+            patch(filename)
 
     def _patch_activate(self, activate):
         """
@@ -880,25 +1011,29 @@ class PythonVirtualEnv:
 
         with open(activate) as f:
             if "ACTIVATE_PATH_FALLBACK" in f.read():
-                self._debug(f"{activate} has already been made relocatable. Continuing.")
+                self._debug(
+                    f"{activate} has already been made relocatable. Continuing."
+                )
                 return
 
         replace_in_file(
             self._conanfile,
-            file_path=activate, 
-            search='deactivate () {',
-            replace=textwrap.dedent('''\
+            file_path=activate,
+            search="deactivate () {",
+            replace=textwrap.dedent(
+                """\
                 ACTIVATE_PATH_FALLBACK="$_"
                 deactivate () {
-                '''
+                """
             ),
         )
 
         replace_in_file(
             self._conanfile,
-            file_path=activate, 
-            search=f'VIRTUAL_ENV="{os.path.abspath(self.env_folder)}"',
-            replace=textwrap.dedent(f'''\
+            file_path=activate,
+            search=f'VIRTUAL_ENV="{os.path.abspath(self.env_dir)}"',
+            replace=textwrap.dedent(
+                f"""\
                 # Attempt to determine VIRTUAL_ENV in relocatable way
                 if [ ! -z "${{BASH_SOURCE:-}}" ]; then
                     # bash
@@ -919,16 +1054,15 @@ class PythonVirtualEnv:
                 fi
 
                 # Default to non-relocatable path
-                VIRTUAL_ENV="{os.path.abspath(self.env_folder)}"
+                VIRTUAL_ENV="{os.path.abspath(self.env_dir)}"
                 if [ ! -z "${{ACTIVATE_PATH:-}}" ]; then
                     VIRTUAL_ENV="$(cd "$(dirname "${{ACTIVATE_PATH}}")/.."; pwd)"
                 fi
                 unset ACTIVATE_PATH
                 unset ACTIVATE_PATH_FALLBACK
-                '''
+                """
             ),
         )
-
 
     def _patch_activate_bat(self, activate):
         """
@@ -941,17 +1075,23 @@ class PythonVirtualEnv:
         """
         with open(activate) as f:
             if "~dp0" in f.read():
-                self._debug(f"{activate} has already been made relocatable. Continuing.")
+                self._debug(
+                    f"{activate} has already been made relocatable. Continuing."
+                )
                 return
-        substitution = textwrap.dedent('''\
+        substitution = textwrap.dedent(
+            """\
                         pushd %~dp0..
                         set "VIRTUAL_ENV=%CD%"
                         popd
-                        ''')
+                        """
+        )
         # These search patterns account for the variations in the contents of activate.bat
         # based on whether it was created using `virtualenv venv` or `python -m venv venv`
-        search_patterns = [f'set "VIRTUAL_ENV={os.path.abspath(self.env_folder)}"',
-                           f'set VIRTUAL_ENV={os.path.abspath(self.env_folder)}']
+        search_patterns = [
+            f'set "VIRTUAL_ENV={os.path.abspath(self.env_dir)}"',
+            f"set VIRTUAL_ENV={os.path.abspath(self.env_dir)}",
+        ]
         missed_patterns = 0
 
         for pattern in search_patterns:
@@ -966,7 +1106,9 @@ class PythonVirtualEnv:
             except Exception:
                 missed_patterns += 1
                 if missed_patterns == len(search_patterns):
-                    self._conanfile.output.error(f"Couldn't find any of the following patterns in {activate}: {','.join('`' + pattern + '`' for pattern in search_patterns)}")
+                    self._conanfile.output.error(
+                        f"Couldn't find any of the following patterns in {activate}: {','.join('`' + pattern + '`' for pattern in search_patterns)}"
+                    )
 
     def _patch_activate_fish(self, activate):
         """
@@ -979,14 +1121,16 @@ class PythonVirtualEnv:
         """
         with open(activate) as f:
             if "dirname" in f.read():
-                self._debug(f"{activate} has already been made relocatable. Continuing.")
+                self._debug(
+                    f"{activate} has already been made relocatable. Continuing."
+                )
                 return
 
         replace_in_file(
             self._conanfile,
-            file_path=activate, 
-            search=f'set -gx VIRTUAL_ENV "{os.path.abspath(self.env_folder)}"',
-            replace='set -gx VIRTUAL_ENV (cd (dirname (status -f)); cd ..; pwd)',
+            file_path=activate,
+            search=f'set -gx VIRTUAL_ENV "{os.path.abspath(self.env_dir)}"',
+            replace="set -gx VIRTUAL_ENV (cd (dirname (status -f)); cd ..; pwd)",
         )
 
     def _patch_activate_csh(self, activate):
@@ -999,17 +1143,20 @@ class PythonVirtualEnv:
         """
         with open(activate) as f:
             if "dirname" in f.read():
-                self._debug(f"{activate} has already been made relocatable. Continuing.")
+                self._debug(
+                    f"{activate} has already been made relocatable. Continuing."
+                )
                 return
 
         replace_in_file(
             self._conanfile,
-            file_path=activate, 
-            search=f'setenv VIRTUAL_ENV "{os.path.abspath(self.env_folder)}"',
-            replace=textwrap.dedent('''\
+            file_path=activate,
+            search=f'setenv VIRTUAL_ENV "{os.path.abspath(self.env_dir)}"',
+            replace=textwrap.dedent(
+                """\
                 set scriptpath=`find /proc/$$/fd -type l -lname '*activate.csh' -printf '%l' | xargs dirname`
                 setenv VIRTUAL_ENV `cd $scriptpath/.. && pwd`
-                '''
+                """
             ),
         )
 
@@ -1021,7 +1168,10 @@ class PythonVirtualEnv:
         :param activate: Path to the script to patch
         :type activate: str
         """
-        self._conanfile.output.error(f"No patch algorithm for 'xonsh' is available to patch {activate}. Contributions are welcome. Unable to make relocatable.")
+        self._conanfile.output.error(
+            f"No patch algorithm for 'xonsh' is available to patch {activate}. "
+            "Contributions are welcome. Unable to make relocatable."
+        )
         return
 
     def _patch_activate_nu(self, activate):
@@ -1032,215 +1182,39 @@ class PythonVirtualEnv:
         :param activate: Path to the script to patch
         :type activate: str
         """
-        self._conanfile.output.error(f"No patch algorithm for 'nu' is available to patch {activate}. Contributions are welcome. Unable to make relocatable.")
+        self._conanfile.output.error(
+            f"No patch algorithm for 'nu' is available to patch {activate}. "
+            "Contributions are welcome. Unable to make relocatable."
+        )
         return
 
-class ScriptPatcher:
-
-    def __init__(self, source_dir, target_dir, conanfile, add_launchers=True, fileop=None):
-        self.source_dir = source_dir
-        self.target_dir = target_dir
-        self.add_launchers = add_launchers
-        self.clobber = True
-        self.set_mode = (os.name == 'posix') or (os.name == 'java' and os._name == 'posix')
-        self._fileop = fileop or FileOperator()
-        self._is_nt = os.name == 'nt' or (os.name == 'java' and os._name == 'nt')
-        self._conanfile = conanfile
-
-    @property
-    def _version(self):
-        return "{}.{}".format(*sys.version_info)
-
-    def _read_contents(self, file):
-        # Read in the contents of the script
-        if ".exe" in file and self._is_nt:
-            # Fortunately the exe's can be read as zip files
-            zip_contents = ZipFile(file)
-            with zip_contents.open("__main__.py") as zf:
-                contents = zf.read().decode("utf-8")
-        else:
-            with open(file) as f:
-                contents = f.read()
-        return contents
-
-    def _build_shebang(self, executable, interpreter, executable_args=[], interpreter_args=[]):
-        executable_args = "" if not executable_args else f" {' '.join(executable_args)}"
-        interpreter_args = "" if not interpreter_args else f" {' '.join(interpreter_args)}"
-        return f"#!{executable}{executable_args} {interpreter}{interpreter_args}\n"
-
-    def _make_shebang(self):
-        if self._is_nt:
-            executable = os.path.normcase(os.environ.get("COMSPEC", "cmd.exe"))
-            executable_args = ["/c"]
-            interpreter = "python.exe"
-            interpreter_args = []
-        else:
-            executable = "/usr/bin/env"
-            executable_args = []
-            interpreter = f"python{self._version}"
-            interpreter_args = []
-
-        return self._build_shebang(executable, interpreter, executable_args, interpreter_args)
-
-    def _remove_shebang(self, contents):
-        shebang_pattern = re.compile(r'^#!.*$')
-        contents = "\n".join([line for line in contents.splitlines() if not shebang_pattern.match(line)])
-        return contents
-
-    def _patch_contents(self, contents):
-        # Patch the contents of a file
-
-        search_string = "import re"
-        # file needs to account for the fact that __file__ is within a zip file
-        # on windows but not on *nix
-        activate = (
-            "import os; "
-            "import sys; "
-            "file=os.path.dirname(os.path.realpath(__file__)) if sys.platform=='win32' else os.path.realpath(__file__); "
-            "activate_this=os.path.join(os.path.dirname(file), 'activate_this.py'); "
-            "exec(compile(open(activate_this).read(), activate_this, 'exec'), { '__file__': activate_this}); "
-            "del os, sys, file, activate_this"
-        )
-        substitution_string = f"{activate}\n{search_string}"
-        # Insert activate_this
-        #contents = contents.replace(search_string, substitution_string)
-        contents = activate + "\n" + contents
-        return contents
-
-    def _write_script(self, name, shebang, script_bytes, ext=None):
-        # We only want to patch a file with a launcher if it's already using a
-        # launcher (i.e., a .exe file. Leave .py files alone)
-        use_launcher = self.add_launchers and self._is_nt and name.endswith('.exe')
-        linesep = os.linesep.encode('utf-8')
-        if not shebang.endswith(linesep):
-            shebang += linesep
-        if not use_launcher:
-            script_bytes = shebang + script_bytes
-        else:  # pragma: no cover
-            if ext == 'py':
-                launcher = self._get_launcher('t')
-            else:
-                launcher = self._get_launcher('w')
-            stream = BytesIO()
-            with ZipFile(stream, 'w') as zf:
-                source_date_epoch = os.environ.get('SOURCE_DATE_EPOCH')
-                if source_date_epoch:
-                    date_time = time.gmtime(int(source_date_epoch))[:6]
-                    zinfo = ZipInfo(filename='__main__.py', date_time=date_time)
-                    zf.writestr(zinfo, script_bytes)
-                else:
-                    zf.writestr('__main__.py', script_bytes)
-            zip_data = stream.getvalue()
-            script_bytes = launcher + shebang + zip_data
-
-        outname = os.path.join(self.target_dir, name)
-        if use_launcher:  # pragma: no cover
-            n, e = os.path.splitext(outname)
-            if e.startswith('.py') or e.startswith('.exe'):
-                outname = n
-            outname = '%s.exe' % outname
-            try:
-                self._conanfile.output.info(f"Writing {outname=}")
-                self._fileop.write_binary_file(outname, script_bytes)
-            except Exception:
-                # Failed writing an executable - it might be in use.
-                self._conanfile.output.warning('Failed to write executable - trying to '
-                               'use .deleteme logic')
-                dfname = '%s.deleteme' % outname
-                if os.path.exists(dfname):
-                    os.remove(dfname)       # Not allowed to fail here
-                os.rename(outname, dfname)  # nor here
-                self._fileop.write_binary_file(outname, script_bytes)
-                self._conanfile.output.debug('Able to replace executable using '
-                             '.deleteme logic')
-                try:
-                    os.remove(dfname)
-                except Exception:
-                    pass    # still in use - ignore error
-        else:
-            if self._is_nt and not outname.endswith('.' + ext):  # pragma: no cover
-                outname = '%s.%s' % (outname, ext)
-                self._conanfile.output.info(f"Renaming {outname=}")
-            if os.path.exists(outname) and not self.clobber:
-                self._conanfile.output.warning('Skipping existing file %s', outname)
-                return
-            self._conanfile.output.info(f"Writing {outname=}")
-            self._fileop.write_binary_file(outname, script_bytes)
-            if self.set_mode:
-                self._fileop.set_executable_mode([outname])
-
-    if os.name == 'nt' or (os.name == 'java' and os._name == 'nt'):  # pragma: no cover
-        # Executable launcher support.
-        # Launchers are from https://bitbucket.org/vinay.sajip/simple_launcher/
-
-        def _get_launcher(self, kind):
-            if struct.calcsize('P') == 8:   # 64-bit
-                bits = '64'
-            else:
-                bits = '32'
-            platform_suffix = '-arm' if get_platform() == 'win-arm64' else ''
-            name = '%s%s%s.exe' % (kind, bits, platform_suffix)
-            # Use distlib from pip
-            # Issue 31 in distlib repo isn't a concern, we don't need dynamic
-            # discovery
-            distlib_package = 'pip._vendor.distlib'
-            resource = finder(distlib_package).find(name)
-            if not resource:
-                msg = ('Unable to find resource %s in package %s' % (name,
-                       distlib_package))
-                raise ValueError(msg)
-            return resource.bytes
-
-    def _patch_script(self, filename):
-        contents = self._read_contents(filename)
-        if "activate_this" in contents:
-            self._conanfile.output.info(f"{filename} has already been patched")
-            return 
-        contents = self._remove_shebang(contents)
-        shebang = self._make_shebang().encode("utf-8")
-        script = self._patch_contents(contents).encode("utf-8")
-        ext = "py"
-        self._write_script(filename, shebang, script, ext)
-
-    @property
-    def _version(self):
-        return "{}.{}".format(*sys.version_info)
-
-    @property
-    def _python_version(self):
-        return f"python{self._version}"
-
     # Public API follows
-
     def patch(self, filename):
         """
         Patch a script.
         """
-        self._patch_script(filename)
+        base_filename = os.path.basename(filename)
+
+        if base_filename in self._dont_patch:
+            return
+        if base_filename in self._activation_scripts:
+            self._patch_activate_script(filename)
+        else:
+            self._patch_program_script(filename)
 
     def patch_scripts(self):
-        interpreter = "python"
-        dont_patch_files = [
-            "python",
-            "python.exe",
-            "python3.exe",
-            "pythonw.exe",
-            self._python_version,
-            "activate",
-            "activate.sh",
-            "activate.bat",
-            "activate_this.py",
-            "activate.fish",
-            "activate.csh",
-            "activate.xsh",
-            "activate.nu",
-            "Activate.ps1",
-            "deactivate.bat",
-        ]
-        for filename in os.listdir(self.source_dir):
-            filename = os.path.join(self.source_dir, filename)
+        """
+        Iterate over the bin directory and patch all scripts that it contains
+        """
+        for filename in os.listdir(self.bin_dir):
+            filename = os.path.join(self.bin_dir, filename)
             if not os.path.isfile(filename):
                 continue
-            if os.path.basename(filename) not in dont_patch_files:
-                self.patch(filename)
+            self.patch(filename)
 
+    def patch_resources(self):
+        """
+        Iterate over the virtual environment home directory and patch
+        `.pth` and `.egg-link` files
+        """
+        self._patch_pth_and_egg_link(self.env_dir)
