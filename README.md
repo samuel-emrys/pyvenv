@@ -18,7 +18,7 @@ Create a new python virtual environment:
 
 ```python
 class PythonVirtualEnvironment(ConanFile):
-    python_requires = "pyvenv/[>=0.2.0]@mtolympus/stable"
+    python_requires = "pyvenv/[>=0.2.1]@mtolympus/stable"
 
     def package(self):
         requirements = ["sphinx==4.4.0", "sphinx_rtd_theme=0.5.3", "matplotlib==3.5.0"]
@@ -43,7 +43,7 @@ Manage an existing python virtual environment:
 from pathlib import Path
 
 class PythonVirtualEnvironment(ConanFile):
-    python_requires = "pyvenv/[>=0.2.0]@mtolympus/stable"
+    python_requires = "pyvenv/[>=0.2.1]@mtolympus/stable"
 
     @property
     def binpath(self):
